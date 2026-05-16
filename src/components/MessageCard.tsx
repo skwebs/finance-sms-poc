@@ -1,16 +1,18 @@
-import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import React, { useState } from "react";
+import { View, Text, StyleSheet, Pressable } from "react-native";
 import { SMS } from "../constants/sms";
 import { parseSmsPreview, ParsedSMS } from "../parsers/parseSmsPreview";
 import { BankChip } from "./BankChip";
 import { CategoryBadge } from "./CategoryBadge";
 import { MessageCategory } from "../constants/messageCategories";
+import { TransactionDetailsModal } from "./TransactionDetailsModal";
 
 interface MessageCardProps {
   item: SMS;
 }
 
 export const MessageCard: React.FC<MessageCardProps> = ({ item }) => {
+  const [modalVisible, setModalVisible] = useState(false);
   const parsed = parseSmsPreview(item.address, item.body);
   const date = new Date(item.date);
 
@@ -60,25 +62,40 @@ export const MessageCard: React.FC<MessageCardProps> = ({ item }) => {
   };
 
   return (
-    <View style={styles.card}>
-      <View style={styles.header}>
-        <View style={styles.leftHeader}>
-          <BankChip bank={parsed.bank} />
-          <Text style={styles.sender} numberOfLines={1}>{item.address}</Text>
+    <>
+      <Pressable 
+        style={({ pressed }) => [
+          styles.card,
+          pressed && styles.pressed
+        ]}
+        onPress={() => setModalVisible(true)}
+      >
+        <View style={styles.header}>
+          <View style={styles.leftHeader}>
+            <BankChip bank={parsed.bank} />
+            <Text style={styles.sender} numberOfLines={1}>{item.address}</Text>
+          </View>
+          <Text style={styles.timestamp}>{date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
         </View>
-        <Text style={styles.timestamp}>{date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
-      </View>
 
-      <View style={styles.categoryRow}>
-        {parsed.categories.map((cat, index) => (
-          <CategoryBadge key={index} category={cat} />
-        ))}
-      </View>
+        <View style={styles.categoryRow}>
+          {parsed.categories.map((cat, index) => (
+            <CategoryBadge key={index} category={cat} />
+          ))}
+        </View>
 
-      {renderPreview()}
+        {renderPreview()}
 
-      <Text style={styles.body} numberOfLines={2}>{item.body}</Text>
-    </View>
+        <Text style={styles.body} numberOfLines={2}>{item.body}</Text>
+      </Pressable>
+
+      <TransactionDetailsModal 
+        visible={modalVisible}
+        onClose={() => setModalVisible(false)}
+        sms={item}
+        parsed={parsed}
+      />
+    </>
   );
 };
 
@@ -93,6 +110,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 3,
+  },
+  pressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.98 }],
   },
   header: {
     flexDirection: "row",

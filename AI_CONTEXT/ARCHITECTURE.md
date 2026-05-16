@@ -2,25 +2,28 @@
 
 ## Folder Structure
 - `src/`: Source code
-  - `app/`: Expo Router screens
-  - `components/`: Reusable UI components (`MessageCard`, `BankChip`, etc.)
+  - `app/`: Expo Router screens & (tabs) group
+  - `components/`: Reusable UI components (`MessageCard`, `TransactionDetailsModal`, etc.)
+  - `db/`: Database schema and persistence logic (`database.ts`, `transactionStore.ts`)
   - `constants/`: Configuration (`banks.ts`, `messageCategories.ts`)
   - `parsers/`: SMS parsing logic
-    - `common/`: Amount, date, and reference extractors
-    - `banks/`: Bank-specific parsing (future)
-  - `utils/`: General utilities (`messageClassifier.ts`)
-  - `types/`: Type definitions
+  - `utils/`: Logic engines (`transactionMeaning.ts`, `deduplicateTransactions.ts`)
 - `modules/`: Local native modules
   - `expo-sms-reader/`: Custom Android SMS reader module
 
 ## Architecture Decisions
-- **Local Native Modules**: Use custom Expo modules instead of outdated third-party libraries for better compatibility with New Architecture.
-- **Lightweight Parsing**: Use regex-based extraction for immediate UI feedback without heavy database overhead.
-- **Categorization First**: Messages are classified into high-level financial categories (Bank, Card, UPI) before deep parsing.
-- **Future Ready**: Parsing architecture is designed to support complex billing cycles and statement analysis.
+- **Local SQLite Persistence**: Use `expo-sqlite` to store transactions and raw SMS for offline analysis and fast performance.
+- **Transaction Fingerprinting**: Generate unique hashes for transactions to prevent double-counting across multiple SMS notifications.
+- **Intent-Based Categorization**: Beyond just "Bank" or "Card", detect "Spend" vs "Payment" to accurately calculate expenses.
+- **Native Bottom Tabs**: Standard mobile navigation pattern for multi-feature scalability.
+
+## Database Schema
+- `transactions`: Normalized financial records with parsed fields and expense flags.
+- `sms_messages`: Audit log of raw SMS data.
+- `cards`: Configuration for credit card billing cycles.
+- `settings`: Key-value store for user preferences.
 
 ## UI/UX Standards
-- Use `Pressable` for interactive elements.
-- Modern, clean typography and spacing.
-- Visual hierarchy using bank chips and category badges.
-- Standardized button variants via `CustomButton`.
+- Use `Modal` for detailed transaction inspection.
+- Premium visual feel for financial summaries (dark mode cards, local currency formatting).
+- Native-first navigation and interaction feedback.

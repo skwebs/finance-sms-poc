@@ -5,6 +5,7 @@ import { extractDate } from "./common/dates";
 import { extractUpiRef, extractCardLast4, extractAccountLast4 } from "./common/references";
 import { identifyBank } from "../utils/messageClassifier";
 import { classifyMessage } from "./classifyMessage";
+import { TransactionType, detectTransactionMeaning } from "../utils/transactionMeaning";
 
 export interface ParsedSMS {
   amount: string | null;
@@ -19,6 +20,8 @@ export interface ParsedSMS {
   minDue: string | null;
   upiRef: string | null;
   confidence: number;
+  transactionType: TransactionType;
+  isExpense: boolean;
 }
 
 export function parseSmsPreview(address: string, body: string): ParsedSMS {
@@ -29,6 +32,7 @@ export function parseSmsPreview(address: string, body: string): ParsedSMS {
   const cardLast4 = extractCardLast4(body);
   const accountLast4 = extractAccountLast4(body);
   const txnDate = extractDate(body);
+  const meaning = detectTransactionMeaning(body, address);
 
   // Merchant extraction logic (simplified)
   let merchant = null;
@@ -84,5 +88,7 @@ export function parseSmsPreview(address: string, body: string): ParsedSMS {
     minDue,
     upiRef,
     confidence: Math.min(confidence, 1.0),
+    transactionType: meaning.type,
+    isExpense: meaning.isExpense,
   };
 }

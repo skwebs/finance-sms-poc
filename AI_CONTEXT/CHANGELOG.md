@@ -1,26 +1,28 @@
 # Changelog
 
-## [2026-05-16] - UI/UX & Categorization Update
+## [2026-05-16] - Transaction Engine & DB Foundation
 
 ### Added
-- Advanced message categorization (Credit Card, Bank, UPI, Statement, General).
-- Bank identification for SBI, HDFC, ICICI, AXIS, KOTAK, PNB, INDUSIND, UJJIVAN, IDFC, YES BANK, AIRTEL, PAYTM, SLICE, CBoI.
-- Lightweight preview parsing for amounts, merchants, card/account endings, and due dates.
-- New `src/components` directory with `MessageCard`, `BankChip`, `CategoryBadge`, and `CustomButton`.
-- Custom professional header with permission status badge.
-- Global header hiding in `_layout.tsx`.
+- `expo-sqlite` integration for local data persistence.
+- Transaction Meaning Engine (`src/utils/transactionMeaning.ts`) for detecting transaction intent (spend, payment, debit, credit).
+- Duplicate Prevention Strategy (`src/utils/deduplicateTransactions.ts`) using transaction fingerprinting/hashing.
+- Normalized Database Schema (transactions, sms_messages, cards, settings).
+- Native Bottom Tab Navigation using Expo Router.
+- Monthly Expense Summary component on the Home tab.
+- Transaction Details Modal for deep inspection of parsed data.
+- Placeholder 'Cards' and 'Settings' tabs for future feature expansion.
 
 ### Changed
-- Replaced `TouchableOpacity` with `Pressable` via `CustomButton`.
-- Upgraded message read count from 20 to 50.
-- Completely redesigned `index.tsx` for a modern finance app feel.
-- Organized logic into `src/parsers`, `src/utils`, and `src/constants`.
+- Migrated main screen to `src/app/(tabs)/index.tsx`.
+- Updated `parseSmsPreview` to include `transactionType` and `isExpense` flags.
+- Enhanced Home UI with a premium-feel summary card.
 
 ### Fixed
-- Improved SMS filtering by using bank identification logic.
+- Improved expense calculation by excluding non-expense transactions (card payments, statement alerts).
 
-## [2026-05-16] - Initial Setup
-- Initialized AI Continuity System in `AI_CONTEXT/`.
+## [2026-05-16] - UI/UX & Categorization Update
+...
+
 - Installed `react-native-get-sms-android`.
 - Created `src/constants/sms.ts` for SMS-related constants and types.
 - Created `src/types/react-native-get-sms-android.d.ts` for library type safety.
