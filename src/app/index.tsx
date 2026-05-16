@@ -3,24 +3,29 @@ import {
   StyleSheet,
   View,
   Text,
-  TouchableOpacity,
   FlatList,
   PermissionsAndroid,
   ActivityIndicator,
   Alert,
   Platform,
+  Pressable,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { getSms } from "../../modules/expo-sms-reader";
-import { SMS, SMSFilter, BANK_KEYWORDS } from "../constants/sms";
+import { SMS, BANK_KEYWORDS } from "../constants/sms";
+import { MessageCard } from "../components/MessageCard";
+import { CustomButton } from "../components/CustomButton";
+import { identifyBank } from "../utils/messageClassifier";
+import { Bank } from "../constants/banks";
 
-// SMS Reader component
+type PermissionState = "granted" | "denied" | "pending";
+
 export default function Index() {
   const [smsList, setSmsList] = useState<SMS[]>([]);
   const [loading, setLoading] = useState(false);
-  const [permissionStatus, setPermissionStatus] = useState<"granted" | "denied" | "pending">("pending");
-  const [filter, setFilter] = useState<SMSFilter>("all");
+  const [permissionStatus, setPermissionStatus] = useState<PermissionState>("pending");
+  const [filter, setFilter] = useState<"all" | "bank">("all");
 
   useEffect(() => {
     checkPermission();
@@ -31,6 +36,9 @@ export default function Index() {
     try {
       const granted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_SMS);
       setPermissionStatus(granted ? "granted" : "denied");
+      if (granted) {
+        readSms();
+      }
     } catch (err) {
       console.warn(err);
     }
@@ -53,6 +61,7 @@ export default function Index() {
 
       if (granted === PermissionsAndroid.RESULTS.GRANTED) {
         setPermissionStatus("granted");
+        readSms();
       } else {
         setPermissionStatus("denied");
       }
@@ -62,14 +71,9 @@ export default function Index() {
   };
 
   const readSms = async () => {
-    if (permissionStatus !== "granted") {
-      Alert.alert("Permission Required", "Please grant SMS permission first.");
-      return;
-    }
-
     setLoading(true);
     try {
-      const messages = await getSms({ maxCount: 20 });
+      const messages = await getSms({ maxCount: 50 });
       setSmsList(messages as SMS[]);
     } catch (err) {
       Alert.alert("Error", "Failed to read SMS: " + (err instanceof Error ? err.message : String(err)));
@@ -81,81 +85,106 @@ export default function Index() {
   const filteredSms = useMemo(() => {
     if (filter === "all") return smsList;
     return smsList.filter((sms) => {
+      const bank = identifyBank(sms.address, sms.body);
+      if (bank !== Bank.UNKNOWN) return true;
+      
       const body = sms.body.toUpperCase();
       const address = sms.address.toUpperCase();
       return BANK_KEYWORDS.some((kw) => body.includes(kw) || address.includes(kw));
     });
   }, [smsList, filter]);
 
-  const renderSmsItem = ({ item }: { item: SMS }) => {
-    const date = new Date(item.date);
+  const renderPermissionBadge = () => {
+    let color = "#8E8E93";
+    let bgColor = "#F2F2F7";
+    
+    if (permissionStatus === "granted") {
+      color = "#34C759";
+      bgColor = "#E7F8ED";
+    } else if (permissionStatus === "denied") {
+      color = "#FF3B30";
+      bgColor = "#FFEBEB";
+    }
+
     return (
-      <View style={styles.smsItem}>
-        <View style={styles.smsHeader}>
-          <Text style={styles.sender}>{item.address}</Text>
-          <Text style={styles.timestamp}>{date.toLocaleString()}</Text>
-        </View>
-        <Text style={styles.body}>{item.body}</Text>
+      <View style={[styles.badge, { backgroundColor: bgColor }]}>
+        <View style={[styles.badgeDot, { backgroundColor: color }]} />
+        <Text style={[styles.badgeText, { color }]}>
+          {permissionStatus === "granted" ? "Access Granted" : permissionStatus === "denied" ? "Access Denied" : "Pending"}
+        </Text>
       </View>
     );
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar style="auto" />
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <StatusBar style="dark" />
+      
+      {/* Custom Professional Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Finance SMS POC</Text>
-        <Text style={styles.subtitle}>Android SMS Access Test</Text>
-        <View style={[styles.badge, permissionStatus === "granted" ? styles.badgeGranted : styles.badgeDenied]}>
-          <Text style={styles.badgeText}>
-            Permission: {permissionStatus.toUpperCase()}
-          </Text>
+        <View style={styles.headerTop}>
+          <View>
+            <Text style={styles.title}>Finance SMS POC</Text>
+            <Text style={styles.subtitle}>Android SMS Access Test</Text>
+          </View>
+          {renderPermissionBadge()}
         </View>
+
+        {permissionStatus !== "granted" && (
+          <CustomButton 
+            title="Grant SMS Permission" 
+            onPress={requestPermission} 
+            style={styles.permissionButton}
+          />
+        )}
       </View>
 
-      <View style={styles.actions}>
-        <TouchableOpacity style={styles.button} onPress={requestPermission}>
-          <Text style={styles.buttonText}>Request SMS Permission</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={[styles.button, permissionStatus !== "granted" && styles.buttonDisabled]} 
-          onPress={readSms}
-          disabled={permissionStatus !== "granted"}
-        >
-          <Text style={styles.buttonText}>Read Last 20 SMS</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.filterContainer}>
-        <TouchableOpacity 
-          style={[styles.filterButton, filter === "all" && styles.filterButtonActive]} 
+      <View style={styles.filterBar}>
+        <Pressable 
           onPress={() => setFilter("all")}
+          style={[styles.filterTab, filter === "all" && styles.filterTabActive]}
         >
-          <Text style={[styles.filterText, filter === "all" && styles.filterTextActive]}>All SMS</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={[styles.filterButton, filter === "bank" && styles.filterButtonActive]} 
+          <Text style={[styles.filterTabText, filter === "all" && styles.filterTabTextActive]}>All Messages</Text>
+        </Pressable>
+        <Pressable 
           onPress={() => setFilter("bank")}
+          style={[styles.filterTab, filter === "bank" && styles.filterTabActive]}
         >
-          <Text style={[styles.filterText, filter === "bank" && styles.filterTextActive]}>Bank SMS Only</Text>
-        </TouchableOpacity>
+          <Text style={[styles.filterTabText, filter === "bank" && styles.filterTabTextActive]}>Financial Only</Text>
+        </Pressable>
       </View>
 
       {loading ? (
-        <ActivityIndicator size="large" color="#007AFF" style={styles.loader} />
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Fetching your messages...</Text>
+        </View>
       ) : (
         <FlatList
           data={filteredSms}
           keyExtractor={(item) => item._id}
-          renderItem={renderSmsItem}
+          renderItem={({ item }) => <MessageCard item={item} />}
           contentContainerStyle={styles.list}
           ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>
-                {smsList.length === 0 ? "No SMS loaded yet." : "No SMS match the filter."}
+            <View style={styles.centerContainer}>
+              <Text style={styles.emptyTitle}>No messages found</Text>
+              <Text style={styles.emptySubtitle}>
+                {permissionStatus !== "granted" 
+                  ? "We need SMS permission to show your financial transactions." 
+                  : "We couldn't find any relevant messages on your device."}
               </Text>
+              {permissionStatus === "granted" && (
+                <CustomButton 
+                  title="Refresh" 
+                  variant="outline" 
+                  onPress={readSms} 
+                  style={{ marginTop: 20 }}
+                />
+              )}
             </View>
           }
+          refreshing={loading}
+          onRefresh={readSms}
         />
       )}
     </SafeAreaView>
@@ -165,127 +194,106 @@ export default function Index() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F5F7FA",
+    backgroundColor: "#F8F9FB",
   },
   header: {
-    padding: 20,
     backgroundColor: "#FFFFFF",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#E1E4E8",
-    alignItems: "center",
+    borderBottomColor: "#F2F2F7",
+  },
+  headerTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
   },
   title: {
-    fontSize: 24,
-    fontWeight: "bold",
+    fontSize: 22,
+    fontWeight: "800",
     color: "#1A1C1E",
+    letterSpacing: -0.5,
   },
   subtitle: {
-    fontSize: 14,
-    color: "#65676B",
-    marginTop: 4,
+    fontSize: 12,
+    color: "#8E8E93",
+    marginTop: 2,
+    fontWeight: "500",
   },
   badge: {
-    marginTop: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 6,
   },
-  badgeGranted: {
-    backgroundColor: "#E7F8ED",
-  },
-  badgeDenied: {
-    backgroundColor: "#FFEBEB",
+  badgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
   badgeText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#1A1C1E",
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
-  actions: {
-    padding: 16,
+  permissionButton: {
+    marginTop: 16,
+  },
+  filterBar: {
+    flexDirection: "row",
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     gap: 12,
   },
-  button: {
-    backgroundColor: "#007AFF",
-    padding: 14,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  buttonDisabled: {
-    backgroundColor: "#A0CFFF",
-  },
-  buttonText: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  filterContainer: {
-    flexDirection: "row",
+  filterTab: {
     paddingHorizontal: 16,
-    marginBottom: 8,
-    gap: 8,
-  },
-  filterButton: {
-    flex: 1,
     paddingVertical: 8,
-    borderRadius: 8,
+    borderRadius: 20,
+    backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#007AFF",
-    alignItems: "center",
+    borderColor: "#E1E4E8",
   },
-  filterButtonActive: {
-    backgroundColor: "#007AFF",
+  filterTabActive: {
+    backgroundColor: "#1A1C1E",
+    borderColor: "#1A1C1E",
   },
-  filterText: {
-    color: "#007AFF",
+  filterTabText: {
+    fontSize: 13,
     fontWeight: "600",
+    color: "#65676B",
   },
-  filterTextActive: {
+  filterTabTextActive: {
     color: "#FFFFFF",
   },
   list: {
-    padding: 16,
+    paddingHorizontal: 20,
     paddingBottom: 40,
   },
-  smsItem: {
-    backgroundColor: "#FFFFFF",
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+  centerContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 100,
+    paddingHorizontal: 40,
   },
-  smsHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  loadingText: {
+    marginTop: 12,
+    color: "#65676B",
+    fontSize: 14,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#1A1C1E",
     marginBottom: 8,
   },
-  sender: {
-    fontWeight: "bold",
+  emptySubtitle: {
     fontSize: 14,
-    color: "#1A1C1E",
-  },
-  timestamp: {
-    fontSize: 12,
-    color: "#65676B",
-  },
-  body: {
-    fontSize: 14,
-    color: "#303234",
+    color: "#8E8E93",
+    textAlign: "center",
     lineHeight: 20,
-  },
-  loader: {
-    marginTop: 40,
-  },
-  emptyContainer: {
-    alignItems: "center",
-    marginTop: 60,
-  },
-  emptyText: {
-    color: "#65676B",
-    fontSize: 16,
   },
 });

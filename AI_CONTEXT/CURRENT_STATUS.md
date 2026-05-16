@@ -3,20 +3,20 @@
 ## Tracked Status
 - **Completed**:
   - Project initialization (Expo SDK 55, RN 0.83)
-  - AI Continuity System setup
-  - Installed `react-native-get-sms-android` for SMS reading
-  - Implemented SMS permission request UI and logic
-  - Implemented "Read Last 20 SMS" functionality
-  - Implemented SMS filtering logic (Bank Only)
-  - Created clean home screen in `src/app/index.tsx`
-  - Replaced broken `react-native-get-sms-android` with custom Local Expo Module (`modules/expo-sms-reader`)
-  - Improved SMS filtering with expanded keyword list
+  - Custom Local Expo Module (`modules/expo-sms-reader`) for Android SMS access
+  - Advanced message categorization logic (Credit Card, Bank, UPI, Statement)
+  - Bank identification for 14+ major Indian banks
+  - Lightweight preview parsing (Amount, Merchant, Card/AC last 4, Due Dates)
+  - Modernized UI with custom header and permission status badge
+  - Reusable UI components (`MessageCard`, `BankChip`, `CategoryBadge`, `CustomButton`)
+  - Scaling architecture for future billing cycle tracking
 - **In Progress**:
-  - Final verification of the POC
+  - Fine-tuning parser regex for edge cases
 - **Pending**:
-  - Future features (Parser, SQLite, etc. - NOT in current scope)
+  - Database integration (SQLite)
+  - Full transaction engine
 - **Blockers**:
   - None
 
 ## Next Exact Task
-- Verify the app in a development build environment (Manual step for user).
+- Verify parsing accuracy with more real-world SMS examples.
