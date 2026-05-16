@@ -1,16 +1,21 @@
 {
   "expo": {
-    "name": "finance-sms-poc",
+    "name": "Finance SMS POC",
     "slug": "finance-sms-poc",
+    "scheme": "financesmspoc",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "financesmspoc",
     "userInterfaceStyle": "automatic",
-    "ios": {
-      "icon": "./assets/expo.icon"
-    },
+    "platforms": [
+      "android"
+    ],
     "android": {
+      "package": "com.skwebs.financesmspoc",
+      "permissions": [
+        "READ_SMS",
+        "RECEIVE_SMS"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -19,12 +24,9 @@
       },
       "predictiveBackGestureEnabled": false
     },
-    "web": {
-      "output": "static",
-      "favicon": "./assets/images/favicon.png"
-    },
     "plugins": [
       "expo-router",
+      "expo-dev-client",
       [
         "expo-splash-screen",
         {

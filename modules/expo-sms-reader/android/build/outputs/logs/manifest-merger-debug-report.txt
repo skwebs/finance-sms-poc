@@ -1,0 +1,16 @@
+-- Merging decision tree log ---
+manifest
+ADDED from E:\Satish\2026\05_May\finance-sms-poc\modules\expo-sms-reader\android\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest1599985227158400300.xml:2:13-83
+INJECTED from E:\Satish\2026\05_May\finance-sms-poc\modules\expo-sms-reader\android\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest1599985227158400300.xml:2:13-83
+	package
+		INJECTED from E:\Satish\2026\05_May\finance-sms-poc\modules\expo-sms-reader\android\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest1599985227158400300.xml
+	xmlns:android
+		ADDED from E:\Satish\2026\05_May\finance-sms-poc\modules\expo-sms-reader\android\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest1599985227158400300.xml:2:23-81
+uses-sdk
+INJECTED from E:\Satish\2026\05_May\finance-sms-poc\modules\expo-sms-reader\android\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest1599985227158400300.xml reason: use-sdk injection requested
+INJECTED from E:\Satish\2026\05_May\finance-sms-poc\modules\expo-sms-reader\android\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest1599985227158400300.xml
+INJECTED from E:\Satish\2026\05_May\finance-sms-poc\modules\expo-sms-reader\android\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest1599985227158400300.xml
+	android:targetSdkVersion
+		INJECTED from E:\Satish\2026\05_May\finance-sms-poc\modules\expo-sms-reader\android\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest1599985227158400300.xml
+	android:minSdkVersion
+		INJECTED from E:\Satish\2026\05_May\finance-sms-poc\modules\expo-sms-reader\android\build\intermediates\tmp\ProcessLibraryManifest\debug\tempAndroidManifest1599985227158400300.xml
