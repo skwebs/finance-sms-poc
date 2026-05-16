@@ -16,13 +16,16 @@ import { SafeAreaView } from "react-native-safe-area-context";
 // Local imports
 import { CustomButton } from "@/components/CustomButton";
 import { MessageCard } from "@/components/MessageCard";
+import { SegmentedToggle } from "@/components/SegmentedToggle";
 import { Bank } from "@/constants/banks";
 import { BANK_KEYWORDS, SMS } from "@/constants/sms";
 import { parseSmsPreview } from "@/parsers/parseSmsPreview";
 import { identifyBank } from "@/utils/messageClassifier";
 import { getSms } from "../../../modules/expo-sms-reader";
+import { batchSaveTransactions, getMonthlyExpenses, getOutstandingBillTotal } from "@/db/transactionStore";
 
 type PermissionState = "granted" | "denied" | "unknown";
+type ViewMode = "Current Bill" | "Current Expense";
 
 /**
  * Finance Home Screen
@@ -35,13 +38,28 @@ function FinanceHomeScreen() {
   const [permissionStatus, setPermissionStatus] =
     useState<PermissionState>("unknown");
   const [filter, setFilter] = useState<"all" | "bank">("bank");
+  const [viewMode, setViewMode] = useState<ViewMode>("Current Bill");
+  
+  // Data from DB
+  const [dbMonthlyExpense, setDbMonthlyExpense] = useState(0);
+  const [dbOutstandingBill, setDbOutstandingBill] = useState(0);
 
   // 2. readSms
   const readSms = useCallback(async () => {
     setLoading(true);
     try {
-      const messages = await getSms({ maxCount: 50 });
+      const messages = await getSms({ maxCount: 100 });
       setSmsList(messages as SMS[]);
+      
+      // Batch save transactions for better performance
+      await batchSaveTransactions(messages as SMS[]);
+      
+      // Refresh DB values
+      const expense = await getMonthlyExpenses();
+      const bill = await getOutstandingBillTotal();
+      setDbMonthlyExpense(expense);
+      setDbOutstandingBill(bill);
+      
     } catch (err) {
       Alert.alert(
         "Error",
@@ -133,14 +151,12 @@ function FinanceHomeScreen() {
   }, [smsList, filter]);
 
   const summary = useMemo(() => {
-    let total = 0;
     let creditCard = 0;
     let bankUpi = 0;
 
     financialSms.forEach((item) => {
       if (item.parsed.isExpense && item.parsed.amount) {
         const amt = parseFloat(item.parsed.amount);
-        total += amt;
         if (item.parsed.transactionType === "credit_card_spend") {
           creditCard += amt;
         } else {
@@ -149,7 +165,7 @@ function FinanceHomeScreen() {
       }
     });
 
-    return { total, creditCard, bankUpi };
+    return { creditCard, bankUpi };
   }, [financialSms]);
 
   const renderPermissionBadge = () => {
@@ -191,29 +207,40 @@ function FinanceHomeScreen() {
       </View>
 
       <View style={styles.summaryContainer}>
-        <Text style={styles.summaryTitle}>This Month</Text>
+        <SegmentedToggle
+          options={["Current Bill", "Current Expense"]}
+          selectedOption={viewMode}
+          onSelect={(opt) => setViewMode(opt as ViewMode)}
+          containerStyle={styles.toggle}
+        />
+        
         <View style={styles.summaryRow}>
           <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>Total Expense</Text>
+            <Text style={styles.summaryLabel}>
+              {viewMode === "Current Bill" ? "Outstanding Bill" : "Total Monthly Expense"}
+            </Text>
             <Text style={styles.summaryValue}>
-              ₹{summary.total.toLocaleString()}
+              ₹{(viewMode === "Current Bill" ? dbOutstandingBill : dbMonthlyExpense).toLocaleString()}
             </Text>
           </View>
         </View>
-        <View style={[styles.summaryRow, { marginTop: 12 }]}>
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>Credit Card</Text>
-            <Text style={styles.summarySubValue}>
-              ₹{summary.creditCard.toLocaleString()}
-            </Text>
+        
+        {viewMode === "Current Expense" && (
+          <View style={[styles.summaryRow, { marginTop: 12 }]}>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Credit Card</Text>
+              <Text style={styles.summarySubValue}>
+                ₹{summary.creditCard.toLocaleString()}
+              </Text>
+            </View>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Bank / UPI</Text>
+              <Text style={styles.summarySubValue}>
+                ₹{summary.bankUpi.toLocaleString()}
+              </Text>
+            </View>
           </View>
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>Bank / UPI</Text>
-            <Text style={styles.summarySubValue}>
-              ₹{summary.bankUpi.toLocaleString()}
-            </Text>
-          </View>
-        </View>
+        )}
       </View>
 
       <View style={styles.listHeader}>
@@ -314,6 +341,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 20,
     elevation: 10,
+  },
+  toggle: {
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    marginBottom: 20,
   },
   summaryTitle: {
     color: "#8E8E93",

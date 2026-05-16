@@ -18,23 +18,24 @@ export interface TransactionMeaning {
 export function detectTransactionMeaning(body: string, address: string): TransactionMeaning {
   const normalizedBody = body.toUpperCase();
   
-  // 1. Credit Card Spend
+  // 1. Credit Card Payment (Bill Paid)
+  // Keywords: received, credited, successful, payment of
   if (
-    (normalizedBody.includes("SPENT") || normalizedBody.includes("SPEND") || normalizedBody.includes("TXN OF")) &&
-    (normalizedBody.includes("CARD") || normalizedBody.includes("SBICARD")) &&
-    !normalizedBody.includes("RECEIVED") &&
-    !normalizedBody.includes("PAYMENT OF")
-  ) {
-    return { type: TransactionType.CREDIT_CARD_SPEND, isExpense: true };
-  }
-
-  // 2. Credit Card Payment
-  if (
-    normalizedBody.includes("PAYMENT") &&
-    (normalizedBody.includes("RECEIVED") || normalizedBody.includes("SUCCESSFUL") || normalizedBody.includes("CREDITED")) &&
-    (normalizedBody.includes("CARD") || normalizedBody.includes("SBICARD"))
+    (normalizedBody.includes("PAYMENT") || normalizedBody.includes("RECEIVED") || normalizedBody.includes("CREDITED") || normalizedBody.includes("SUCCESSFUL")) &&
+    (normalizedBody.includes("CARD") || normalizedBody.includes("SBICARD") || normalizedBody.includes("CREDIT CARD")) &&
+    !normalizedBody.includes("SPENT") &&
+    !normalizedBody.includes("TXN OF")
   ) {
     return { type: TransactionType.CREDIT_CARD_PAYMENT, isExpense: false };
+  }
+
+  // 2. Credit Card Spend (Expense)
+  // Keywords: spent, spend, txn of
+  if (
+    (normalizedBody.includes("SPENT") || normalizedBody.includes("SPEND") || normalizedBody.includes("TXN OF")) &&
+    (normalizedBody.includes("CARD") || normalizedBody.includes("SBICARD") || normalizedBody.includes("CREDIT CARD"))
+  ) {
+    return { type: TransactionType.CREDIT_CARD_SPEND, isExpense: true };
   }
 
   // 3. Statement Due
@@ -68,7 +69,7 @@ export function detectTransactionMeaning(body: string, address: string): Transac
     normalizedBody.includes("DEPOSITED")
   ) {
     if (normalizedBody.includes("REFUND")) {
-      return { type: TransactionType.REFUND, isExpense: true }; // Negative expense handled later
+      return { type: TransactionType.REFUND, isExpense: true }; // Negative expense
     }
     if (normalizedBody.includes("UPI")) {
       return { type: TransactionType.MONEY_RECEIVED, isExpense: false };

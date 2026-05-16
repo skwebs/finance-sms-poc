@@ -1,56 +1,69 @@
+import { Ionicons } from "@expo/vector-icons";
+import { FlashList } from "@shopify/flash-list";
+import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  StyleSheet,
-  View,
-  Text,
-  ScrollView,
   ActivityIndicator,
   Alert,
-  RefreshControl,
-  Dimensions,
-  Pressable,
   Modal,
+  Pressable,
+  StyleSheet,
+  Text,
   TextInput,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { StatusBar } from "expo-status-bar";
-import { Ionicons } from "@expo/vector-icons";
 
 // Local imports
-import { SMS } from "@/constants/sms";
+import { CustomButton } from "@/components/CustomButton";
+import { SegmentedToggle } from "@/components/SegmentedToggle";
 import { Bank, BANKS } from "@/constants/banks";
 import { MessageCategory } from "@/constants/messageCategories";
-import { parseSmsPreview, ParsedSMS } from "@/parsers/parseSmsPreview";
+import { type SMS } from "@/constants/sms";
+import {
+  batchSaveTransactions,
+  getCardBillSummaries,
+  getCardSettings,
+  getUnlinkedPayments,
+  saveCardSettings,
+  type CardBillSummary,
+  type CardSettings,
+} from "@/db/transactionStore";
+import { parseSmsPreview, type ParsedSMS } from "@/parsers/parseSmsPreview";
+import { parseSafeAmount } from "@/utils/amountParser";
+import { getLatestStatementDate } from "@/utils/billingCycle";
 import { getSms } from "../../../modules/expo-sms-reader";
-import { CustomButton } from "@/components/CustomButton";
 
-const { width } = Dimensions.get("window");
-
-interface CardSettings {
-  billingDay: number;
-  gracePeriod: number;
-}
-
+// Type definitions
 interface CardData {
   bank: Bank;
   last4: string;
   transactions: (ParsedSMS & { date: number })[];
   latestStatement: (ParsedSMS & { date: number }) | null;
+  settings: CardSettings;
 }
+
+type CardViewMode = "Current Bill" | "Current Expense";
 
 /**
  * Cards Screen
  * Dynamically detects unique credit cards from SMS and calculates billing cycle expenses.
- * Allows users to set billing day and grace period for each card.
+ * Uses FlashList for performance and persists card settings.
  */
 export default function CardsScreen() {
   const [smsList, setSmsList] = useState<SMS[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // Local config for cards (could be persisted via AsyncStorage or DB)
-  const [cardConfigs, setCardConfigs] = useState<Record<string, CardSettings>>(
-    {},
+  const [refreshing, setRefreshing] = useState(false);
+  const [cardBillSummaries, setCardBillSummaries] = useState<CardBillSummary[]>(
+    [],
   );
+  const [unlinkedPayments, setUnlinkedPayments] = useState<
+    { amount: number; bank: string }[]
+  >([]);
+  const [viewMode, setViewMode] = useState<CardViewMode>("Current Bill");
+  const [persistedSettings, setPersistedSettings] = useState<
+    Record<string, CardSettings>
+  >({});
 
   const [editingCard, setEditingCard] = useState<{
     key: string;
@@ -60,25 +73,60 @@ export default function CardsScreen() {
   const [editBillingDay, setEditBillingDay] = useState("");
   const [editGracePeriod, setEditGracePeriod] = useState("");
 
-  // Fetch SMS
-  const fetchSms = useCallback(async () => {
-    setLoading(true);
+  // Fetch data
+  const fetchData = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+
     try {
       const messages = await getSms({ maxCount: 200 });
       setSmsList(messages as SMS[]);
+
+      // Batch save transactions for better performance
+      await batchSaveTransactions(messages as SMS[]);
+
+      const [summaries, unlinked] = await Promise.all([
+        getCardBillSummaries(),
+        getUnlinkedPayments(),
+      ]);
+
+      setCardBillSummaries(summaries);
+      setUnlinkedPayments(unlinked);
+
+      // Load settings for all detected cards
+      const uniqueCards = new Set<string>();
+      messages.forEach((sms) => {
+        const parsed = parseSmsPreview(sms.address, sms.body);
+        if (parsed.cardLast4) {
+          uniqueCards.add(`${parsed.bank}-${parsed.cardLast4}`);
+        }
+      });
+
+      const settingsMap: Record<string, CardSettings> = {};
+      await Promise.all(
+        Array.from(uniqueCards).map(async (key) => {
+          const [bank, last4] = key.split("-");
+          const settings = await getCardSettings(bank, last4);
+          if (settings) {
+            settingsMap[key] = settings;
+          }
+        }),
+      );
+      setPersistedSettings(settingsMap);
     } catch (err) {
-      console.error("Failed to fetch SMS for cards:", err);
+      console.error("Failed to fetch data for cards:", err);
       Alert.alert("Error", "Could not load SMS data.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchSms();
-  }, [fetchSms]);
+    fetchData();
+  }, [fetchData]);
 
-  // Group transactions by Card
+  // Memoize detected cards to prevent expensive recalculations
   const detectedCards = useMemo(() => {
     const cardsMap: Record<string, CardData> = {};
 
@@ -93,6 +141,10 @@ export default function CardsScreen() {
           last4: parsed.cardLast4,
           transactions: [],
           latestStatement: null,
+          settings: persistedSettings[cardKey] || {
+            billingDay: 15,
+            gracePeriod: 20,
+          },
         };
       }
 
@@ -102,7 +154,7 @@ export default function CardsScreen() {
       if (parsed.categories.includes(MessageCategory.STATEMENT)) {
         if (
           !cardsMap[cardKey].latestStatement ||
-          sms.date > cardsMap[cardKey].latestStatement.date
+          sms.date > (cardsMap[cardKey].latestStatement?.date || 0)
         ) {
           cardsMap[cardKey].latestStatement = txn;
         }
@@ -110,17 +162,17 @@ export default function CardsScreen() {
     });
 
     return Object.values(cardsMap);
-  }, [smsList]);
+  }, [smsList, persistedSettings]);
 
-  const handleEditCard = (card: CardData) => {
+  const handleEditCard = useCallback((card: CardData) => {
     const key = `${card.bank}-${card.last4}`;
-    const config = cardConfigs[key] || { billingDay: 15, gracePeriod: 20 };
+    const settings = card.settings;
     setEditingCard({ key, bank: card.bank, last4: card.last4 });
-    setEditBillingDay(config.billingDay.toString());
-    setEditGracePeriod(config.gracePeriod.toString());
-  };
+    setEditBillingDay(settings.billingDay.toString());
+    setEditGracePeriod(settings.gracePeriod.toString());
+  }, []);
 
-  const saveSettings = () => {
+  const saveSettings = async () => {
     if (!editingCard) return;
 
     const bDay = parseInt(editBillingDay);
@@ -135,74 +187,91 @@ export default function CardsScreen() {
       return;
     }
 
-    setCardConfigs((prev) => ({
+    const newSettings = { billingDay: bDay, gracePeriod: gPeriod };
+
+    // Persist card settings to local database
+    await saveCardSettings(editingCard.bank, editingCard.last4, newSettings);
+
+    setPersistedSettings((prev) => ({
       ...prev,
-      [editingCard.key]: { billingDay: bDay, gracePeriod: gPeriod },
+      [editingCard.key]: newSettings,
     }));
     setEditingCard(null);
   };
 
-  // Billing cycle helper
-  const calculateCardStats = (card: CardData) => {
-    const key = `${card.bank}-${card.last4}`;
-    const config = cardConfigs[key] || { billingDay: 15, gracePeriod: 20 };
+  // Billing Cycle Logic
+  const getCardStats = useCallback(
+    (card: CardData) => {
+      const { billingDay, gracePeriod } = card.settings;
 
-    const { billingDay, gracePeriod } = config;
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
-    const day = now.getDate();
+      // Latest statement date (e.g., 15th May)
+      const latestStatementDate = getLatestStatementDate(billingDay);
 
-    let cycleStart: Date;
-    let cycleEnd: Date;
+      // Previous Cycle (Current Bill): e.g., 16 April - 15 May
+      const prevCycleStart = new Date(latestStatementDate);
+      prevCycleStart.setMonth(prevCycleStart.getMonth() - 1);
+      prevCycleStart.setDate(prevCycleStart.getDate() + 1);
+      prevCycleStart.setHours(0, 0, 0, 0);
 
-    // "if billing cycle is 15 june it means transaction calculate from 16 june to 15 july"
-    // This means if today is after 15th, cycle started on 16th of THIS month.
-    // If today is 15th or before, cycle started on 16th of LAST month.
-    if (day > billingDay) {
-      cycleStart = new Date(year, month, billingDay + 1);
-      cycleEnd = new Date(year, month + 1, billingDay);
-    } else {
-      cycleStart = new Date(year, month - 1, billingDay + 1);
-      cycleEnd = new Date(year, month, billingDay);
-    }
+      // Current Cycle (Unbilled Expense): e.g., 16 May - 15 June
+      const currCycleStart = new Date(latestStatementDate);
+      currCycleStart.setDate(currCycleStart.getDate() + 1);
+      currCycleStart.setHours(0, 0, 0, 0);
 
-    cycleStart.setHours(0, 0, 0, 0);
-    cycleEnd.setHours(23, 59, 59, 999);
+      const currCycleEnd = new Date(currCycleStart);
+      currCycleEnd.setMonth(currCycleEnd.getMonth() + 1);
+      currCycleEnd.setDate(currCycleEnd.getDate() - 1);
+      currCycleEnd.setHours(23, 59, 59, 999);
 
-    const currentCycleTxns = card.transactions.filter(
-      (t) => t.date >= cycleStart.getTime() && t.date <= cycleEnd.getTime(),
-    );
+      // Current Bill stats from DB
+      const billSummary = cardBillSummaries.find(
+        (s) => s.bank === card.bank && s.cardLast4 === card.last4,
+      );
 
-    const currentSpend = currentCycleTxns.reduce((sum, t) => {
-      if (t.isExpense && t.amount) {
-        return sum + parseFloat(t.amount);
-      }
-      return sum;
-    }, 0);
+      // Unbilled Spends: after latest statement
+      const unbilledTxns = card.transactions.filter(
+        (t) => t.date > latestStatementDate.getTime(),
+      );
 
-    // Due Date = Cycle End Date + Grace Period
-    const dueDateObj = new Date(cycleEnd);
-    dueDateObj.setDate(dueDateObj.getDate() + gracePeriod);
-    const dueDateStr = `${dueDateObj.getDate()} ${dueDateObj.toLocaleString("default", { month: "short" })}`;
+      let unbilledSpend = 0;
+      let spendCount = 0;
+      unbilledTxns.forEach((t) => {
+        if (t.transactionType === "credit_card_spend") {
+          unbilledSpend += parseSafeAmount(t.amount);
+          spendCount++;
+        } else if (t.transactionType === "refund") {
+          unbilledSpend -= parseSafeAmount(t.amount);
+        }
+      });
 
-    return {
-      currentSpend,
-      unbilled: currentSpend,
-      cycleRange: `${cycleStart.getDate()} ${cycleStart.toLocaleString("default", { month: "short" })} - ${cycleEnd.getDate()} ${cycleEnd.toLocaleString("default", { month: "short" })}`,
-      dueDate: dueDateStr,
-      totalDue: card.latestStatement?.totalDue
-        ? parseFloat(card.latestStatement.totalDue)
-        : 0,
-    };
-  };
+      const dueDate = new Date(latestStatementDate);
+      dueDate.setDate(dueDate.getDate() + gracePeriod);
 
-  const renderCard = (card: CardData) => {
+      return {
+        // Current Bill section
+        totalDue: billSummary?.totalDue || 0,
+        minDue: billSummary?.minDue || 0,
+        paidAmount: billSummary?.paidAmount || 0,
+        status: billSummary?.status || "unpaid",
+        statementDueDate: billSummary?.dueDate || dueDate.toLocaleDateString(),
+        prevCycleRange: `${prevCycleStart.getDate()} ${prevCycleStart.toLocaleString("default", { month: "short" })} - ${latestStatementDate.getDate()} ${latestStatementDate.toLocaleString("default", { month: "short" })}`,
+
+        // Current Expense section
+        unbilledSpend,
+        transactionCount: spendCount,
+        cycleRange: `${currCycleStart.getDate()} ${currCycleStart.toLocaleString("default", { month: "short" })} - ${currCycleEnd.getDate()} ${currCycleEnd.toLocaleString("default", { month: "short" })}`,
+      };
+    },
+    [cardBillSummaries],
+  );
+
+  // Render Helpers
+  const renderCard = ({ item: card }: { item: CardData }) => {
     const bankConfig = BANKS[card.bank] || BANKS[Bank.UNKNOWN];
-    const stats = calculateCardStats(card);
+    const stats = getCardStats(card);
 
     return (
-      <View key={`${card.bank}-${card.last4}`} style={styles.cardContainer}>
+      <View style={styles.cardContainer}>
         <View
           style={[styles.creditCard, { backgroundColor: bankConfig.color }]}
         >
@@ -228,44 +297,133 @@ export default function CardsScreen() {
           <View style={styles.cardBottom}>
             <View>
               <Text style={styles.cardLabel}>BILLING CYCLE</Text>
-              <Text style={styles.cardValue}>{stats.cycleRange}</Text>
+              <Text style={styles.cardValue}>
+                {viewMode === "Current Bill"
+                  ? stats.prevCycleRange
+                  : stats.cycleRange}
+              </Text>
             </View>
             <View style={{ alignItems: "flex-end" }}>
-              <Text style={styles.cardLabel}>DUE DATE (EST.)</Text>
-              <Text style={styles.cardValue}>{stats.dueDate}</Text>
+              <Text style={styles.cardLabel}>DUE DATE</Text>
+              <Text style={styles.cardValue}>{stats.statementDueDate}</Text>
             </View>
           </View>
         </View>
 
         <View style={styles.statsContainer}>
-          <Text style={styles.sectionTitle}>Cycle Summary</Text>
-          <View style={styles.statRow}>
-            <Text style={styles.statLabel}>Current Spend</Text>
-            <Text style={styles.statValue}>
-              ₹{stats.currentSpend.toLocaleString("en-IN")}
-            </Text>
-          </View>
-          <View style={styles.statRow}>
-            <Text style={styles.statLabel}>Unbilled Amount</Text>
-            <Text style={styles.statValue}>
-              ₹{stats.unbilled.toLocaleString("en-IN")}
-            </Text>
-          </View>
-          <View style={[styles.statRow, { borderBottomWidth: 0 }]}>
-            <Text style={styles.statLabel}>Last Statement Due</Text>
-            <Text
-              style={[
-                styles.statValue,
-                { color: stats.totalDue > 0 ? "#FF3B30" : "#1A1C1E" },
-              ]}
-            >
-              ₹{stats.totalDue.toLocaleString("en-IN")}
-            </Text>
-          </View>
+          {viewMode === "Current Bill" ? (
+            <>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Statement Amount</Text>
+                <Text style={styles.statValue}>
+                  ₹{stats.totalDue.toLocaleString("en-IN")}
+                </Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Minimum Due</Text>
+                <Text style={styles.statValue}>
+                  ₹{stats.minDue.toLocaleString("en-IN")}
+                </Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Paid Amount</Text>
+                <Text style={styles.statValue}>
+                  ₹{stats.paidAmount.toLocaleString("en-IN")}
+                </Text>
+              </View>
+              <View style={[styles.statRow, { borderBottomWidth: 0 }]}>
+                <Text style={styles.statLabel}>Status</Text>
+                <View
+                  style={[
+                    styles.statusBadge,
+                    {
+                      backgroundColor:
+                        stats.status === "paid"
+                          ? "#E7F8ED"
+                          : stats.status === "partially_paid"
+                            ? "#FFF9E6"
+                            : "#FFEBEB",
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.statusText,
+                      {
+                        color:
+                          stats.status === "paid"
+                            ? "#34C759"
+                            : stats.status === "partially_paid"
+                              ? "#FF9500"
+                              : "#FF3B30",
+                      },
+                    ]}
+                  >
+                    {stats.status.toUpperCase().replace("_", " ")}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.paymentDisplay}>
+                ₹{stats.paidAmount.toLocaleString()} / ₹
+                {stats.totalDue.toLocaleString()} paid
+              </Text>
+            </>
+          ) : (
+            <>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Unbilled Spends</Text>
+                <Text style={styles.statValue}>
+                  ₹{stats.unbilledSpend.toLocaleString("en-IN")}
+                </Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Cycle Range</Text>
+                <Text style={styles.statValue}>{stats.cycleRange}</Text>
+              </View>
+              <View style={[styles.statRow, { borderBottomWidth: 0 }]}>
+                <Text style={styles.statLabel}>Live Transactions</Text>
+                <Text style={styles.statValue}>{stats.transactionCount}</Text>
+              </View>
+              <Text style={styles.paymentDisplay}>
+                Expenses tracked after latest statement
+              </Text>
+            </>
+          )}
         </View>
       </View>
     );
   };
+
+  const ListHeader = useMemo(() => {
+    return (
+      <View>
+        <View style={styles.globalToggleContainer}>
+          <SegmentedToggle
+            options={["Current Bill", "Current Expense"]}
+            selectedOption={viewMode}
+            onSelect={(opt) => setViewMode(opt as CardViewMode)}
+            containerStyle={styles.globalToggle}
+          />
+        </View>
+
+        {unlinkedPayments.length > 0 && (
+          <View style={styles.unlinkedContainer}>
+            <View style={styles.unlinkedHeader}>
+              <Ionicons name="alert-circle-outline" size={20} color="#FF9500" />
+              <Text style={styles.unlinkedTitle}>Unlinked Payments</Text>
+            </View>
+            <Text style={styles.unlinkedText}>
+              We found ₹
+              {unlinkedPayments
+                .reduce((sum, p) => sum + p.amount, 0)
+                .toLocaleString()}{" "}
+              in payments that aren&apos;t clearly linked to a card.
+            </Text>
+          </View>
+        )}
+      </View>
+    );
+  }, [unlinkedPayments, viewMode]);
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -275,30 +433,32 @@ export default function CardsScreen() {
         <Text style={styles.subtitle}>Dynamic cycle tracking</Text>
       </View>
 
-      {loading && smsList.length === 0 ? (
+      {loading ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
           <Text style={styles.loadingText}>Detecting your cards...</Text>
         </View>
       ) : (
-        <ScrollView
-          contentContainerStyle={styles.content}
-          refreshControl={
-            <RefreshControl refreshing={loading} onRefresh={fetchSms} />
-          }
-        >
-          {detectedCards.length > 0 ? (
-            detectedCards.map(renderCard)
-          ) : (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyTitle}>No cards detected</Text>
-              <Text style={styles.emptyText}>
-                We couldn&apos;t find any credit card transactions in your SMS
-                inbox.
-              </Text>
-            </View>
-          )}
-        </ScrollView>
+        <View style={{ flex: 1 }}>
+          <FlashList
+            data={detectedCards}
+            renderItem={renderCard}
+            keyExtractor={(item: any) => `${item.bank}-${item.last4}`}
+            contentContainerStyle={styles.content}
+            ListHeaderComponent={ListHeader}
+            refreshing={refreshing}
+            onRefresh={() => fetchData(true)}
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyTitle}>No cards detected</Text>
+                <Text style={styles.emptyText}>
+                  We couldn&apos;t find any credit card transactions in your SMS
+                  inbox.
+                </Text>
+              </View>
+            }
+          />
+        </View>
       )}
 
       {/* Edit Card Settings Modal */}
@@ -389,6 +549,20 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 40,
   },
+  globalToggleContainer: {
+    marginBottom: 24,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 5,
+    elevation: 2,
+  },
+  globalToggle: {
+    backgroundColor: "transparent",
+  },
   cardContainer: {
     marginBottom: 32,
   },
@@ -463,15 +637,13 @@ const styles = StyleSheet.create({
     elevation: 2,
     zIndex: -1,
   },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#1A1C1E",
+  cardToggle: {
     marginBottom: 16,
   },
   statRow: {
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: "#F2F2F7",
@@ -485,11 +657,50 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#1A1C1E",
   },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  paymentDisplay: {
+    fontSize: 12,
+    color: "#8E8E93",
+    marginTop: 12,
+    textAlign: "center",
+    fontWeight: "600",
+  },
+  unlinkedContainer: {
+    backgroundColor: "#FFF9E6",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 20,
+  },
+  unlinkedHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  unlinkedTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#856404",
+  },
+  unlinkedText: {
+    fontSize: 13,
+    color: "#856404",
+    lineHeight: 18,
+  },
   centerContainer: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: 40,
+    paddingTop: 40,
+    paddingHorizontal: 40,
   },
   loadingText: {
     marginTop: 12,
